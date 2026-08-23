@@ -1,0 +1,30 @@
+{
+  "_comment": "EIM data-quality MCP server. Credentials come from this repo's gitignored .env via cwd. Do not point this server at oracle-mcp-chatbot.",
+  "mcpServers": {
+    "oracle-eim-dq": {
+      "command": "/usr/local/bin/python3",
+      "args": ["-m", "oracle_mcp.server", "--profile", "both"],
+      "cwd": "/Users/vdobhal/Cursor_Projects/oracle-eim-dq",
+      "env": {
+        "PYTHONPATH": "/Users/vdobhal/Cursor_Projects/oracle-eim-dq/.pydeps:/Users/vdobhal/Cursor_Projects/oracle-eim-dq/src",
+        "PYTHONUNBUFFERED": "1",
+        "ORACLE_MCP_PROFILE": "both",
+        "ORACLE_MCP_TRANSPORT": "stdio",
+        "ORACLE_MCP_POLICY_DIR": "/Users/vdobhal/Cursor_Projects/oracle-eim-dq/config/policy",
+        "ORACLE_MCP_MAX_ROWS": "200",
+        "ORACLE_MCP_QUERY_TIMEOUT_SECONDS": "30",
+        "ORACLE_MCP_ROLE_BINDING_MODE": "env",
+        "ORACLE_MCP_PINNED_ROLE": "analyst",
+        "ORACLE_MCP_PINNED_USER_ID": "vdobhal@netapp.com",
+        "ORACLE_MCP_AUDIT_SINK": "file",
+        "ORACLE_MCP_AUDIT_FILE": "/Users/vdobhal/Cursor_Projects/oracle-eim-dq/logs/audit-eim-dq.jsonl",
+        "ORACLE_MCP_DQ_CATALOG_DATABASE": "ONPREM",
+        "ORACLE_MCP_DQ_CATALOG_SCHEMA": "EIM",
+        "ORACLE_MCP_DQ_CATALOG_TABLE": "EIM_DQ_RULES_LOOKUP",
+        "ORACLE_MCP_DQ_HISTORY_FILE": "/Users/vdobhal/Cursor_Projects/oracle-eim-dq/logs/dq-history.jsonl",
+        "ONPREM_ENABLED": "true",
+        "ATP_ENABLED": "true"
+      }
+    }
+  }
+}

@@ -1,0 +1,78 @@
+# =============================================================================
+# ON-PREM ORACLE DB - object allowlist
+# =============================================================================
+# Nothing outside this file is reachable, regardless of what the database user
+# is technically granted. This is the second of three independent access layers
+# (DB grants -> this allowlist -> role clearance).
+#
+# This database is in strict allowlist mode: exactly the governed objects below are
+# reachable and nothing else. Adding an object here is a governance decision,
+# so it goes through review rather than being discovered automatically.
+database: ONPREM
+display_name: On-Prem Oracle DB
+description: >-
+  EIM system of record. Product, system, install-base and sales-order reference
+  data. Source side of the On-Prem -> ATP integration.
+
+# An object referenced without a schema prefix resolves here.
+default_schema: EIM
+
+# Column lists are omitted deliberately. Columns are then read from the data
+# dictionary at query time and classified by the naming rules in masking.yaml,
+# so the allowlist stays accurate as these objects evolve. To pin a column set
+# and hand-assign sensitivity, add a `columns:` block to that object; doing so
+# switches it to declared mode and the dictionary is no longer consulted.
+schemas:
+  - name: EIM
+    description: Enterprise Information Management source objects.
+    business_domain: Product and Install Base
+    objects:
+      - name: EIM_PR_SYSTEM
+        type: TABLE
+        description: Registered systems and their current attributes.
+        business_domain: Install Base
+        sensitivity: INTERNAL
+        large_table: true
+        require_filter: true
+
+      - name: EIM_DRM_PRODUCT_DETAILS
+        type: TABLE
+        description: Product master detail sourced from DRM.
+        business_domain: Product
+        sensitivity: INTERNAL
+        large_table: true
+        require_filter: false
+
+      - name: EIM_PR_SN_SO_REF_PUB
+        type: TABLE
+        description: Serial number to sales order cross-reference.
+        business_domain: Sales Order
+        sensitivity: INTERNAL
+        large_table: true
+        require_filter: true
+
+      - name: EIM_PR_IB_LATEST
+        type: TABLE
+        description: Latest install-base snapshot per system.
+        business_domain: Install Base
+        sensitivity: INTERNAL
+        large_table: true
+        require_filter: true
+
+      - name: EIM_PR_ROLES
+        type: TABLE
+        description: Role assignments used by EIM processing.
+        business_domain: Reference Data
+        sensitivity: INTERNAL
+        large_table: false
+        require_filter: false
+
+      - name: EIM_DQ_RULES_LOOKUP
+        type: TABLE
+        description: >-
+          Governed EIM data-quality rule catalog. Only ACTIVE rules are eligible
+          for MCP execution; stored SQL is independently validated as read-only.
+        business_domain: Data Quality Governance
+        sensitivity: INTERNAL
+        large_table: false
+        require_filter: false
