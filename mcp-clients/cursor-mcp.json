@@ -19,7 +19,7 @@
         "ORACLE_MCP_AUDIT_SINK": "file",
         "ORACLE_MCP_AUDIT_FILE": "/Users/vdobhal/Cursor_Projects/oracle-eim-dq/logs/audit-eim-dq.jsonl",
         "ORACLE_MCP_DQ_CATALOG_DATABASE": "ONPREM",
-        "ORACLE_MCP_DQ_CATALOG_SCHEMA": "EIM",
+        "ORACLE_MCP_DQ_CATALOG_SCHEMA": "EIM_APPS",
         "ORACLE_MCP_DQ_CATALOG_TABLE": "EIM_DQ_RULES_LOOKUP",
         "ORACLE_MCP_DQ_HISTORY_FILE": "/Users/vdobhal/Cursor_Projects/oracle-eim-dq/logs/dq-history.jsonl",
         "ONPREM_ENABLED": "true",

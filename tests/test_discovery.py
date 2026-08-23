@@ -317,6 +317,7 @@ def test_deployed_onprem_exposes_exactly_the_governed_objects(deployed_policy_di
         "EIM.EIM_PR_ROLES",
         "EIM.EIM_PR_SN_SO_REF_PUB",
         "EIM.EIM_PR_SYSTEM",
+        "EIM_APPS.EIM_DQ_RULES_LOOKUP",
     ]
 
 

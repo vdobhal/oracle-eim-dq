@@ -447,7 +447,7 @@ class ToolService:
             database = self.settings.dq_catalog_database.upper()
             table = self._dq_catalog_fqn()
             sql = (
-                "SELECT RULE_ID, RULE_NAME, DIMENSION, ATTRIBUTE, DQ_RULE, "
+                "SELECT RULE_ID, RULE_NAME, DIMENSION, ATTRIBUTE_NAME AS ATTRIBUTE, DQ_RULE, "
                 "SEVERITY AS CATALOG_SEVERITY, CONTROL_TYPE, AUTOMATION_CANDIDATE, "
                 "IMPLEMENTATION_STATUS, REFERENCE_CHECKPOINT "
                 f"FROM {table} "
@@ -614,7 +614,7 @@ class ToolService:
         database = self.settings.dq_catalog_database.upper()
         table = self._dq_catalog_fqn()
         sql = (
-            "SELECT RULE_ID, RULE_NAME, DIMENSION, ATTRIBUTE, DQ_RULE, "
+            "SELECT RULE_ID, RULE_NAME, DIMENSION, ATTRIBUTE_NAME AS ATTRIBUTE, DQ_RULE, "
             "SEVERITY AS CATALOG_SEVERITY, CONTROL_TYPE, AUTOMATION_CANDIDATE, "
             "IMPLEMENTATION_STATUS, REFERENCE_CHECKPOINT "
             f"FROM {table} "

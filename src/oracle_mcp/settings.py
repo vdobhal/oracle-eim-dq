@@ -278,7 +278,7 @@ class Settings(BaseSettings):
     # EIM data-quality framework. The governed rule catalog is read from
     # On-Prem; target SQL may run against either database on the "both" profile.
     dq_catalog_database: str = "ONPREM"
-    dq_catalog_schema: str = "EIM"
+    dq_catalog_schema: str = "EIM_APPS"
     dq_catalog_table: str = "EIM_DQ_RULES_LOOKUP"
     dq_history_file: Path = Path("logs/dq-history.jsonl")
     dq_max_rules: int = Field(default=200, ge=1, le=1000)

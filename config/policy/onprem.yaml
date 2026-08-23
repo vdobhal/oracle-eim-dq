@@ -70,6 +70,20 @@ schemas:
       - name: EIM_DQ_RULES_LOOKUP
         type: TABLE
         description: >-
+          Legacy EIM-schema copy of the DQ catalog, if present. The governed
+          catalog used by this server is EIM_APPS.EIM_DQ_RULES_LOOKUP.
+        business_domain: Data Quality Governance
+        sensitivity: INTERNAL
+        large_table: false
+        require_filter: false
+
+  - name: EIM_APPS
+    description: EIM application schema holding the governed data-quality catalog.
+    business_domain: Data Quality Governance
+    objects:
+      - name: EIM_DQ_RULES_LOOKUP
+        type: TABLE
+        description: >-
           Governed EIM data-quality rule catalog. Only ACTIVE rules are eligible
           for MCP execution; stored SQL is independently validated as read-only.
         business_domain: Data Quality Governance

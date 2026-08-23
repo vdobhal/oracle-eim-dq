@@ -4,7 +4,7 @@
 
 1. Connect to the `oracle-eim-dq` MCP server (`--profile both`).
 2. Call `list_active_dq_rules`. The server reads only rows whose
-   `RULE_STATUS = 'ACTIVE'` from `EIM.EIM_DQ_RULES_LOOKUP`.
+   `RULE_STATUS = 'ACTIVE'` from `EIM_APPS.EIM_DQ_RULES_LOOKUP`.
 3. Use `DQ_RULE` and `REFERENCE_CHECKPOINT` as context to prepare two aggregate
    queries for a selected rule:
    - one integer aliased `TOTAL_RECORDS`

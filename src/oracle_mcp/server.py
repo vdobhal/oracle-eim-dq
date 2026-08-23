@@ -85,7 +85,7 @@ def create_server(settings: Settings | None = None) -> FastMCP:
     service = build_service(settings)
     scope = ", ".join(service.registry.names)
     mcp = FastMCP(
-        name=f"oracle-mcp-{settings.profile}",
+        name="oracle-eim-dq",
         instructions=(
             f"Read-only Oracle access for {scope}. Discover metadata with "
             "list_allowed_schemas, list_allowed_tables, get_table_metadata and "
@@ -108,7 +108,7 @@ def create_server(settings: Settings | None = None) -> FastMCP:
 
     @mcp.tool
     def list_allowed_schemas(database_name: str, user_role: str = "") -> dict[str, Any]:
-        """List the schemas this chatbot is authorised to read on a database.
+        """List the schemas this DQ server is authorised to read on a database.
 
         Args:
             database_name: ONPREM or ATP.
