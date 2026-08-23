@@ -179,7 +179,14 @@ class SqlGuard:
 
     # ---- entry point -------------------------------------------------------
 
-    def validate(self, sql_text: str, *, database_name: str, role: Role) -> ValidationResult:
+    def validate(
+        self,
+        sql_text: str,
+        *,
+        database_name: str,
+        role: Role,
+        apply_row_limit: bool = True,
+    ) -> ValidationResult:
         errors: list[ValidationError] = []
         warnings: list[str] = []
 
@@ -217,11 +224,13 @@ class SqlGuard:
         if errors:
             return self._reject(errors)
 
-        effective_limit = self.store.effective_max_rows(role, self.max_rows)
-        tree, applied_limit, limit_notes = self._apply_row_limit(
-            tree, effective_limit, is_aggregate
-        )
-        warnings.extend(limit_notes)
+        applied_limit = None
+        if apply_row_limit:
+            effective_limit = self.store.effective_max_rows(role, self.max_rows)
+            tree, applied_limit, limit_notes = self._apply_row_limit(
+                tree, effective_limit, is_aggregate
+            )
+            warnings.extend(limit_notes)
 
         tree = self._expand_star(tree, objects, role, warnings, database_name)
 

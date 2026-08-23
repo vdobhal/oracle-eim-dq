@@ -74,6 +74,18 @@ def test_onprem_server_exposes_the_expected_tools(env, policy_dir, tmp_path):
     assert "compare_onprem_and_atp_data" not in names
 
 
+def test_persistence_tool_appears_only_when_writer_is_enabled(
+    env, policy_dir, tmp_path
+):
+    env.setenv("DQ_WRITE_USER", "EIM_DQ_WRITER")
+    env.setenv("DQ_WRITE_PASSWORD", "writer-password")
+    settings = build(env, policy_dir, tmp_path, "onprem").model_copy(
+        update={"dq_persistence_enabled": True}
+    )
+    names = asyncio.run(tool_names(create_server(settings)))
+    assert "execute_and_persist_data_quality_rule" in names
+
+
 def test_atp_server_exposes_the_same_tool_surface(env, policy_dir, tmp_path):
     server = create_server(build(env, policy_dir, tmp_path, "atp"))
     assert "validate_sql" in asyncio.run(tool_names(server))

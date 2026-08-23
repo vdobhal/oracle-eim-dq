@@ -90,3 +90,11 @@ schemas:
         sensitivity: INTERNAL
         large_table: false
         require_filter: false
+
+      - name: EIM_DQ_RECON_SUMMARY
+        type: TABLE
+        description: Persisted rule-level DQ metrics used for scoped trend comparisons.
+        business_domain: Data Quality Governance
+        sensitivity: INTERNAL
+        large_table: false
+        require_filter: true

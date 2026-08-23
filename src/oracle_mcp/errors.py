@@ -87,3 +87,8 @@ class DatabaseUnavailableError(ChatbotError):
 class QueryExecutionError(ChatbotError):
     code = "QUERY_EXECUTION_FAILED"
     user_message = "The database rejected the query."
+
+
+class PersistenceError(ChatbotError):
+    code = "DQ_PERSISTENCE_FAILED"
+    user_message = "The DQ results could not be persisted."

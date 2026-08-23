@@ -55,3 +55,22 @@ def test_load_env_file_does_not_override_real_environment(tmp_path: Path, monkey
 
     assert os.environ["ONPREM_USER"] == "from_environment"
     assert os.environ["ATP_USER"] == "from_file"
+
+
+def test_dq_writer_is_disabled_by_default(settings: Settings):
+    assert settings.dq_writer_profile is None
+
+
+def test_dq_writer_uses_separate_credentials(settings: Settings, monkeypatch):
+    monkeypatch.setenv("ONPREM_USER", "CHATBOT_RO")
+    monkeypatch.setenv("ONPREM_PASSWORD", "reader-secret")
+    monkeypatch.setenv("ONPREM_DSN", "db.example.test/service")
+    monkeypatch.setenv("DQ_WRITE_USER", "EIM_DQ_WRITER")
+    monkeypatch.setenv("DQ_WRITE_PASSWORD", "writer-secret")
+    configured = settings.model_copy(update={"dq_persistence_enabled": True})
+    profile = configured.dq_writer_profile
+    assert profile is not None
+    assert profile.user == "EIM_DQ_WRITER"
+    assert profile.password.get_secret_value() == "writer-secret"
+    assert profile.user != os.environ["ONPREM_USER"]
+    assert "writer-secret" not in repr(profile)

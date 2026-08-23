@@ -24,6 +24,7 @@ from fastmcp import FastMCP
 
 from .audit import AuditLogger
 from .db import ConnectionRegistry
+from .persistence import DqPersistenceRepository
 from .policy import get_policy_store
 from .settings import DB_NAME_BY_PROFILE, Settings, get_settings
 from .tools import ToolService
@@ -77,7 +78,24 @@ def build_service(settings: Settings) -> ToolService:
         table_name=settings.audit_table,
         connection=audit_connection,
     )
-    return ToolService(settings=settings, store=store, registry=registry, audit=audit)
+    dq_persistence = None
+    writer_profile = settings.dq_writer_profile
+    if writer_profile is not None:
+        dq_persistence = DqPersistenceRepository(
+            profile=writer_profile,
+            summary_table=settings.dq_summary_table,
+            detail_table=settings.dq_detail_table,
+            batch_size=settings.dq_write_batch_size,
+            max_details=settings.dq_max_failed_details,
+            query_timeout_seconds=settings.query_timeout_seconds,
+        )
+    return ToolService(
+        settings=settings,
+        store=store,
+        registry=registry,
+        audit=audit,
+        dq_persistence=dq_persistence,
+    )
 
 
 def create_server(settings: Settings | None = None) -> FastMCP:
@@ -93,7 +111,8 @@ def create_server(settings: Settings | None = None) -> FastMCP:
             "validate_sql, and execute_readonly_sql must be given exactly the "
             "rewritten_safe_sql that validate_sql returned. Never invent object or "
             "column names. For EIM data quality, call list_active_dq_rules first and "
-            "execute only ACTIVE rules through execute_data_quality_rule."
+            "execute only ACTIVE rules through execute_data_quality_rule. Persisted "
+            "runs require the explicit execute_and_persist_data_quality_rule tool."
         ),
     )
 
@@ -257,6 +276,36 @@ def create_server(settings: Settings | None = None) -> FastMCP:
             user_id or None,
         )
 
+    if settings.dq_persistence_enabled:
+
+        @mcp.tool
+        def execute_and_persist_data_quality_rule(
+            rule_id: str,
+            target_database: str,
+            total_records_sql: str,
+            failed_records_sql: str,
+            failed_records_detail_sql: str,
+            user_role: str = "",
+            user_id: str = "",
+        ) -> dict[str, Any]:
+            """Evaluate one ACTIVE DQ rule and persist its summary and failed details.
+
+            All three inputs must be SELECT statements over approved objects.
+            ``failed_records_detail_sql`` must return exactly SYSTEM_SERIAL_NUMBER,
+            SOURCE_RECORD_KEY, FAILURE_REASON, and DQ_ATTRIBUTES_JSON. A separate
+            least-privilege writer performs fixed parameterized inserts; arbitrary
+            DML remains prohibited.
+            """
+            return service.execute_and_persist_data_quality_rule(
+                rule_id,
+                target_database,
+                total_records_sql,
+                failed_records_sql,
+                failed_records_detail_sql,
+                user_role or None,
+                user_id or None,
+            )
+
     @mcp.tool
     def explain_query_result(
         user_question: str,
@@ -376,6 +425,10 @@ def _healthcheck(settings: Settings) -> int:
         ok = connection.ping()
         print(f"{name}: {'OK' if ok else 'FAILED'}")
         failures += 0 if ok else 1
+    if service.dq_persistence is not None:
+        writer_ok = service.dq_persistence.connection.ping()
+        print(f"DQ_WRITE: {'OK' if writer_ok else 'FAILED'}")
+        failures += 0 if writer_ok else 1
     for database_name, policy in service.store.databases.items():
         objects = sum(len(s.objects) for s in policy.schemas)
         if policy.discovery_enabled:
@@ -402,6 +455,8 @@ def _healthcheck(settings: Settings) -> int:
             )
     print(f"roles: {', '.join(sorted(service.store.roles))}")
     service.registry.close_all()
+    if service.dq_persistence is not None:
+        service.dq_persistence.close()
     return 1 if failures else 0
 
 

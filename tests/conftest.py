@@ -107,6 +107,14 @@ class FakeConnection:
         rows = self.rows[:max_rows]
         return self.columns or (list(rows[0].keys()) if rows else []), rows, self.truncate, 12.5
 
+    def iter_fetch(
+        self, sql: str, binds: dict[str, Any] | None = None, *, batch_size: int = 1000
+    ):
+        self.executed.append((sql, dict(binds or {})))
+        if self.raises is not None:
+            raise self.raises
+        yield from self.rows
+
     def plan_cost(self, sql: str, binds: dict[str, Any] | None = None) -> int | None:
         return None
 

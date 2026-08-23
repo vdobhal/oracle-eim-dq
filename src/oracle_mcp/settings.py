@@ -282,6 +282,11 @@ class Settings(BaseSettings):
     dq_catalog_table: str = "EIM_DQ_RULES_LOOKUP"
     dq_history_file: Path = Path("logs/dq-history.jsonl")
     dq_max_rules: int = Field(default=200, ge=1, le=1000)
+    dq_persistence_enabled: bool = False
+    dq_summary_table: str = "EIM_APPS.EIM_DQ_RECON_SUMMARY"
+    dq_detail_table: str = "EIM_APPS.EIM_DQ_FAILED_RECORDS"
+    dq_write_batch_size: int = Field(default=1000, ge=1, le=10_000)
+    dq_max_failed_details: int = Field(default=1_000_000, ge=1, le=10_000_000)
 
     # Standalone chat UI (python -m oracle_mcp.chat). The LLM is OpenAI-compatible
     # so a corporate gateway works the same as api.openai.com.
@@ -311,6 +316,35 @@ class Settings(BaseSettings):
     def oracle_profiles(self) -> dict[ProfileName, OracleProfile]:
         load_env_file()
         return {name: _load_profile(name) for name in self.active_profiles}
+
+    @property
+    def dq_writer_profile(self) -> OracleProfile | None:
+        """Build the isolated On-Prem writer profile only when persistence is enabled."""
+        if not self.dq_persistence_enabled:
+            return None
+        load_env_file()
+        reader = _load_profile("onprem")
+        return OracleProfile(
+            profile="onprem",
+            database_name="DQ_WRITE",
+            display_name="On-Prem DQ Results Writer",
+            user=_env("DQ_WRITE_USER"),
+            password=SecretStr(_env("DQ_WRITE_PASSWORD")),
+            dsn=_env("DQ_WRITE_DSN", reader.effective_dsn),
+            mode=_env("DQ_WRITE_MODE", reader.mode).lower() or "thin",
+            lib_dir=_env("DQ_WRITE_LIB_DIR", reader.lib_dir),
+            wallet_dir=_env("DQ_WRITE_WALLET_DIR", reader.wallet_dir),
+            wallet_password=SecretStr(
+                _env(
+                    "DQ_WRITE_WALLET_PASSWORD",
+                    reader.wallet_password.get_secret_value(),
+                )
+            ),
+            config_dir=_env("DQ_WRITE_CONFIG_DIR", reader.config_dir),
+            pool_min=_env_int("DQ_WRITE_POOL_MIN", 1),
+            pool_max=_env_int("DQ_WRITE_POOL_MAX", 2),
+            pool_increment=_env_int("DQ_WRITE_POOL_INCREMENT", 1),
+        )
 
     @property
     def reconciliation_enabled(self) -> bool:

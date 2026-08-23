@@ -56,7 +56,12 @@ class DqHistory:
         self._lock = threading.Lock()
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
-    def previous(self, database: str, rule_id: str) -> dict[str, Any] | None:
+    def previous(
+        self,
+        database: str,
+        rule_id: str,
+        population_signature: str | None = None,
+    ) -> dict[str, Any] | None:
         if not self.path.is_file():
             return None
         latest: dict[str, Any] | None = None
@@ -70,6 +75,10 @@ class DqHistory:
                     if (
                         str(row.get("database", "")).upper() == database.upper()
                         and str(row.get("rule_id", "")) == str(rule_id)
+                        and (
+                            population_signature is None
+                            or row.get("population_signature") == population_signature
+                        )
                     ):
                         latest = row
         except OSError:

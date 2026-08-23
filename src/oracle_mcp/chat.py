@@ -42,6 +42,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def lifespan(_app: FastAPI):
         yield
         service.registry.close_all()
+        if service.dq_persistence is not None:
+            service.dq_persistence.close()
 
     app = FastAPI(title="Oracle Data Assistant", lifespan=lifespan)
     app.state.service = service

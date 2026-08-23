@@ -26,6 +26,9 @@ import time
 from collections import OrderedDict
 from typing import Any
 
+import sqlglot
+from sqlglot import exp
+
 from .audit import AuditLogger, build_event, new_request_id, sanitize_free_text
 from .db import ConnectionRegistry, OracleConnection
 from .dq import (
@@ -36,7 +39,12 @@ from .dq import (
     trend_from,
     utc_now,
 )
-from .errors import AccessDeniedError, ChatbotError, SqlValidationError
+from .errors import (
+    AccessDeniedError,
+    ChatbotError,
+    ConfigurationError,
+    SqlValidationError,
+)
 from .explain import (
     data_quality_flags,
     empty_result_reasons,
@@ -46,9 +54,10 @@ from .explain import (
 from .masking import Masker
 from .metadata import DataDictionary, MetadataService
 from .policy import PolicyStore, Role
+from .persistence import DqPersistenceRepository
 from .reconcile import SideResult, compare_result_sets
 from .settings import Settings
-from .sql_guard import SqlGuard, ValidationResult
+from .sql_guard import SqlGuard, ValidationResult, fingerprint
 
 logger = logging.getLogger(__name__)
 
@@ -95,11 +104,13 @@ class ToolService:
         store: PolicyStore,
         registry: ConnectionRegistry,
         audit: AuditLogger,
+        dq_persistence: DqPersistenceRepository | None = None,
     ) -> None:
         self.settings = settings
         self.store = store
         self.registry = registry
         self.audit = audit
+        self.dq_persistence = dq_persistence
         self.masker = Masker(store.masking_config)
         self.dictionary = DataDictionary(registry)
         # Lets the policy layer discover schemas and columns that the YAML does
@@ -586,6 +597,190 @@ class ToolService:
                 sql=failed_records_sql,
             )
 
+    def execute_and_persist_data_quality_rule(
+        self,
+        rule_id: str,
+        target_database: str,
+        total_records_sql: str,
+        failed_records_sql: str,
+        failed_records_detail_sql: str,
+        user_role: str | None = None,
+        user_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Evaluate an ACTIVE rule and atomically persist its summary and details."""
+        request_id = new_request_id()
+        role: Role | None = None
+        resolved_user = user_id or "unknown"
+        try:
+            role, resolved_user = self._identity(user_role, user_id)
+            if self.dq_persistence is None:
+                raise ConfigurationError(
+                    "DQ persistence is disabled or the dedicated writer is not configured.",
+                    next_steps=[
+                        "Configure DQ_WRITE_* secrets and enable "
+                        "ORACLE_MCP_DQ_PERSISTENCE_ENABLED."
+                    ],
+                )
+            clean_rule_id = sanitize_free_text(rule_id, 200)
+            rule = self._active_dq_rule(clean_rule_id, role)
+            if rule is None:
+                raise AccessDeniedError(
+                    f"DQ rule {clean_rule_id!r} is not ACTIVE in the governed catalog.",
+                    next_steps=["Call list_active_dq_rules and choose an ACTIVE rule."],
+                )
+
+            database = target_database.upper()
+            total_validation = self.guard.validate(
+                total_records_sql, database_name=database, role=role
+            )
+            total, total_objects = self._execute_dq_metric(
+                database, total_records_sql, "TOTAL_RECORDS", role
+            )
+            failed, failed_objects = self._execute_dq_metric(
+                database, failed_records_sql, "FAILED_RECORDS", role
+            )
+            detail_validation = self.guard.validate(
+                failed_records_detail_sql,
+                database_name=database,
+                role=role,
+                apply_row_limit=False,
+            )
+            if not detail_validation.approved:
+                raise SqlValidationError(
+                    "FAILED_RECORDS detail SQL was rejected: "
+                    + "; ".join(
+                        error.message
+                        for error in detail_validation.validation_errors
+                    )
+                )
+            if detail_validation.bind_parameters:
+                raise SqlValidationError(
+                    "FAILED_RECORDS detail SQL cannot contain bind parameters."
+                )
+            detail_sql = detail_validation.rewritten_safe_sql or ""
+            self._validate_dq_detail_projection(detail_sql)
+
+            metrics = calculate_metrics(total, failed)
+            population_signature = fingerprint(
+                total_validation.rewritten_safe_sql or total_records_sql
+            )
+            previous = self._previous_persisted_dq_result(
+                clean_rule_id, database, population_signature, role
+            ) or self.dq_history.previous(
+                database, clean_rule_id, population_signature
+            )
+            trend = trend_from(metrics["failure_percentage"], previous)
+            run_id = new_request_id()
+            source_objects = sorted(
+                set(
+                    total_objects
+                    + failed_objects
+                    + detail_validation.referenced_objects
+                )
+            )
+            result = {
+                "run_id": run_id,
+                "execution_timestamp": utc_now(),
+                "database": database,
+                "rule_id": clean_rule_id,
+                "rule_name": rule.get("RULE_NAME") or clean_rule_id,
+                "dimension": rule.get("DIMENSION") or "",
+                "attribute": rule.get("ATTRIBUTE") or "",
+                "dq_rule": rule.get("DQ_RULE") or "",
+                "reference_checkpoint": rule.get("REFERENCE_CHECKPOINT") or "",
+                "population_signature": population_signature,
+                "total_sql_signature": fingerprint(
+                    total_validation.rewritten_safe_sql or total_records_sql
+                ),
+                "detail_sql_signature": fingerprint(detail_sql),
+                "source_objects": source_objects,
+                "executed_by": resolved_user,
+                **metrics,
+                "trend": trend,
+            }
+            result["recommended_actions"] = recommended_actions(result)
+            report = render_markdown([result], result["execution_timestamp"])
+            result["report_markdown"] = report
+
+            connection = self.registry.get(database)
+            detail_rows = connection.iter_fetch(
+                detail_sql, batch_size=self.settings.dq_write_batch_size
+            )
+            persisted_details = self.dq_persistence.persist(result, detail_rows)
+            try:
+                self.dq_history.append(result)
+            except OSError:
+                logger.warning(
+                    "Local DQ history write failed after persisted run %s; "
+                    "database history remains authoritative.",
+                    run_id,
+                )
+            self._audit(
+                request_id,
+                "execute_and_persist_data_quality_rule",
+                database,
+                resolved_user,
+                role,
+                "SUCCESS",
+                sql=failed_records_detail_sql,
+                validation_status="APPROVED",
+                referenced_objects=source_objects,
+                row_count=persisted_details,
+                response_summary=(
+                    f"run={run_id} rule={clean_rule_id} "
+                    f"persisted_details={persisted_details}"
+                ),
+            )
+            return self._ok(
+                {
+                    "run_id": run_id,
+                    "result": result,
+                    "persisted_summary_rows": 1,
+                    "persisted_detail_rows": persisted_details,
+                    "report_markdown": report,
+                },
+                request_id,
+            )
+        except ChatbotError as exc:
+            return self._handle(
+                exc,
+                request_id,
+                "execute_and_persist_data_quality_rule",
+                target_database,
+                user_role,
+                user_id=resolved_user,
+                role=role,
+                sql=failed_records_detail_sql,
+            )
+
+    @staticmethod
+    def _validate_dq_detail_projection(sql: str) -> None:
+        tree = sqlglot.parse_one(sql, dialect="oracle")
+        select = tree if isinstance(tree, exp.Select) else tree.find(exp.Select)
+        aliases = {
+            expression.alias_or_name.upper()
+            for expression in (select.expressions if select is not None else [])
+            if expression.alias_or_name
+        }
+        required = {
+            "SYSTEM_SERIAL_NUMBER",
+            "SOURCE_RECORD_KEY",
+            "FAILURE_REASON",
+            "DQ_ATTRIBUTES_JSON",
+        }
+        missing = required - aliases
+        extra = aliases - required
+        if missing or extra:
+            parts = []
+            if missing:
+                parts.append("missing " + ", ".join(sorted(missing)))
+            if extra:
+                parts.append("unexpected " + ", ".join(sorted(extra)))
+            raise SqlValidationError(
+                "FAILED_RECORDS detail SQL must return exactly the governed "
+                "detail columns: " + "; ".join(parts) + "."
+            )
+
     def _dq_catalog_fqn(self) -> str:
         schema = self.settings.dq_catalog_schema.upper()
         table = self.settings.dq_catalog_table.upper()
@@ -593,6 +788,53 @@ class ToolService:
         if not identifier.fullmatch(schema) or not identifier.fullmatch(table):
             raise SqlValidationError("The configured DQ catalog object name is invalid.")
         return f"{schema}.{table}"
+
+    def _previous_persisted_dq_result(
+        self,
+        rule_id: str,
+        database: str,
+        population_signature: str,
+        role: Role,
+    ) -> dict[str, Any] | None:
+        table = self.settings.dq_summary_table.strip().upper()
+        if table != "EIM_APPS.EIM_DQ_RECON_SUMMARY":
+            raise ConfigurationError(
+                "DQ summary history must use EIM_APPS.EIM_DQ_RECON_SUMMARY."
+            )
+        sql = (
+            "SELECT FAILURE_PERCENTAGE, SEVERITY, EXECUTED_AT "
+            f"FROM {table} "
+            "WHERE RULE_ID = :rule_id "
+            "AND SOURCE_DATABASE = :source_database "
+            "AND POPULATION_SIGNATURE = :population_signature "
+            "ORDER BY EXECUTED_AT DESC FETCH FIRST 1 ROWS ONLY"
+        )
+        try:
+            payload = self._run_internal_select(
+                self.settings.dq_catalog_database.upper(),
+                sql,
+                role,
+                {
+                    "rule_id": rule_id,
+                    "source_database": database,
+                    "population_signature": population_signature,
+                },
+            )
+            if not payload["rows"]:
+                return None
+            row = payload["rows"][0]
+            return {
+                "failure_percentage": row.get("FAILURE_PERCENTAGE"),
+                "severity": row.get("SEVERITY"),
+                "execution_timestamp": row.get("EXECUTED_AT"),
+                "population_signature": population_signature,
+            }
+        except ChatbotError as exc:
+            logger.warning(
+                "Persisted DQ trend unavailable (%s); using local history.",
+                exc.code,
+            )
+            return None
 
     def _run_internal_select(
         self,

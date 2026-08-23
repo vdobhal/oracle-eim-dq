@@ -206,6 +206,33 @@ class OracleConnection:
         elapsed_ms = (time.perf_counter() - started) * 1000
         return columns, rows, truncated, elapsed_ms
 
+    def iter_fetch(
+        self,
+        sql: str,
+        binds: dict[str, Any] | None = None,
+        *,
+        batch_size: int = 1000,
+    ) -> Iterator[dict[str, Any]]:
+        """Stream a previously validated SELECT without materialising all rows."""
+        with self.read_only_cursor() as cursor:
+            try:
+                cursor.arraysize = batch_size
+                cursor.prefetchrows = batch_size
+                cursor.execute(sql, binds or {})
+                columns = [d[0] for d in (cursor.description or [])]
+                while True:
+                    records = cursor.fetchmany(batch_size)
+                    if not records:
+                        break
+                    for record in records:
+                        yield {
+                            col: to_json_safe(value)
+                            for col, value in zip(columns, record)
+                        }
+            except oracledb.Error as exc:
+                logger.warning("Streaming query failed on %s: %s", self.database_name, exc)
+                raise _classify(exc, self.profile.display_name) from None
+
     def plan_cost(self, sql: str, binds: dict[str, Any] | None = None) -> int | None:
         """Estimated plan cost, or None when PLAN_TABLE is unavailable.
 
