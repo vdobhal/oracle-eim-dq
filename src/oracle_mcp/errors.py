@@ -92,3 +92,8 @@ class QueryExecutionError(ChatbotError):
 class PersistenceError(ChatbotError):
     code = "DQ_PERSISTENCE_FAILED"
     user_message = "The DQ results could not be persisted."
+
+
+class MailDeliveryError(ChatbotError):
+    code = "DQ_MAIL_FAILED"
+    user_message = "The DQ recon summary could not be emailed."

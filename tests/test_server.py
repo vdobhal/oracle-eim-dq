@@ -86,6 +86,7 @@ def test_persistence_tool_appears_only_when_writer_is_enabled(
     assert "start_dq_run" in names
     assert "execute_and_persist_data_quality_rule" in names
     assert "get_dq_run_report" in names
+    assert "email_dq_run_summary" in names
 
 
 def test_atp_server_exposes_the_same_tool_surface(env, policy_dir, tmp_path):

@@ -287,6 +287,14 @@ class Settings(BaseSettings):
     dq_detail_table: str = "EIM_APPS.EIM_DQ_FAILED_RECORDS"
     dq_write_batch_size: int = Field(default=1000, ge=1, le=10_000)
     dq_max_failed_details: int = Field(default=1_000_000, ge=1, le=10_000_000)
+    dq_mail_to: str = "vdobhal@netapp.com"
+    dq_mail_from: str = "oracle-eim-dq@localhost"
+    dq_mail_smtp_host: str = ""
+    dq_mail_smtp_port: int = Field(default=25, ge=1, le=65535)
+    dq_mail_smtp_user: str = ""
+    dq_mail_smtp_password: SecretStr = SecretStr("")
+    dq_mail_smtp_starttls: bool = True
+    dq_mail_transport: Literal["auto", "smtp", "sendmail", "mailapp"] = "auto"
 
     # Standalone chat UI (python -m oracle_mcp.chat). The LLM is OpenAI-compatible
     # so a corporate gateway works the same as api.openai.com.

@@ -106,6 +106,16 @@ WHERE RUN_ID = :run_id
 ORDER BY RULE_ID;
 ```
 
+Share the same summary by mail with `email_dq_run_summary` or:
+
+```bash
+PYTHONPATH=.pydeps:src python3 scripts/send_dq_summary_mail.py \
+  --run-id <run_id> --to vdobhal@netapp.com
+```
+
+The mail body is rebuilt from `EIM_APPS.EIM_DQ_RECON_SUMMARY` only. Failed-record
+rows in `EIM_APPS.EIM_DQ_FAILED_RECORDS` are not queried, inlined, or attached.
+
 Persistence uses a separate `EIM_DQ_WRITER` account with INSERT only on those
 two tables. The source reader remains transactionally read-only, and all
 failed-detail SQL passes the same AST guard before streaming. The summary and

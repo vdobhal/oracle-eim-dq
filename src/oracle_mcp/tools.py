@@ -43,8 +43,10 @@ from .errors import (
     AccessDeniedError,
     ChatbotError,
     ConfigurationError,
+    MailDeliveryError,
     SqlValidationError,
 )
+from .mail import build_summary_message, send_summary_mail
 from .explain import (
     data_quality_flags,
     empty_result_reasons,
@@ -871,6 +873,90 @@ class ToolService:
                 role=role,
             )
 
+    def email_dq_run_summary(
+        self,
+        run_id: str | None,
+        user_role: str | None = None,
+        batch_id: str | None = None,
+        to_address: str | None = None,
+    ) -> dict[str, Any]:
+        """Email the company summary only; never attach failed-record details."""
+        request_id = new_request_id()
+        role: Role | None = None
+        try:
+            role, resolved_user = self._identity(user_role)
+            report = self.get_dq_run_report(run_id, user_role, batch_id)
+            if report.get("status") != "OK":
+                return report
+            recipient = sanitize_free_text(
+                to_address or self.settings.dq_mail_to, 254
+            )
+            if "@" not in recipient:
+                raise SqlValidationError("A valid mail recipient is required.")
+            if self.settings.dq_detail_table.upper() in (
+                report.get("report_markdown") or ""
+            ).upper():
+                raise MailDeliveryError(
+                    "Refusing to send mail that references failed-record details."
+                )
+            message = build_summary_message(
+                run_id=str(report["run_id"]),
+                results=list(report["results"]),
+                to_address=recipient,
+                from_address=self.settings.dq_mail_from,
+                generated_at=str(
+                    report["results"][0].get("execution_timestamp") or utc_now()
+                ),
+            )
+            transport = send_summary_mail(
+                message,
+                transport=self.settings.dq_mail_transport,
+                smtp_host=self.settings.dq_mail_smtp_host,
+                smtp_port=self.settings.dq_mail_smtp_port,
+                smtp_user=self.settings.dq_mail_smtp_user,
+                smtp_password=self.settings.dq_mail_smtp_password.get_secret_value(),
+                smtp_starttls=self.settings.dq_mail_smtp_starttls,
+            )
+            self._audit(
+                request_id,
+                "email_dq_run_summary",
+                self.settings.dq_catalog_database,
+                resolved_user,
+                role,
+                "SUCCESS",
+                referenced_objects=[self.settings.dq_summary_table],
+                row_count=int(report["rule_count"]),
+                response_summary=(
+                    f"run_id={report['run_id']} to={recipient} transport={transport}"
+                ),
+            )
+            return self._ok(
+                {
+                    "run_id": report["run_id"],
+                    "batch_id": report["run_id"],
+                    "to_address": recipient,
+                    "subject": message["Subject"],
+                    "transport": transport,
+                    "rule_count": report["rule_count"],
+                    "included_failed_record_details": False,
+                    "notes": [
+                        "Mail body is the recon summary from "
+                        "EIM_APPS.EIM_DQ_RECON_SUMMARY only.",
+                        "EIM_APPS.EIM_DQ_FAILED_RECORDS is not queried or attached.",
+                    ],
+                },
+                request_id,
+            )
+        except ChatbotError as exc:
+            return self._handle(
+                exc,
+                request_id,
+                "email_dq_run_summary",
+                self.settings.dq_catalog_database,
+                user_role,
+                role=role,
+            )
+
     @staticmethod
     def _company_dq_run_id(
         run_id: str | None,
@@ -909,6 +995,12 @@ class ToolService:
                 "status": row.get("TREND_STATUS") or "BASELINE",
                 "deteriorated": str(row.get("TREND_STATUS") or "") == "DETERIORATED",
                 "change_percentage_points": row.get("CHANGE_PERCENTAGE_POINTS"),
+                "message": (
+                    f"Failure rate changed by {row.get('CHANGE_PERCENTAGE_POINTS')} "
+                    "percentage points."
+                    if row.get("CHANGE_PERCENTAGE_POINTS") is not None
+                    else "No prior like-for-like comparison was available."
+                ),
             },
             "execution_timestamp": row.get("EXECUTED_AT"),
             "executed_by": row.get("EXECUTED_BY"),

@@ -234,6 +234,26 @@ def render_markdown(results: list[dict[str, Any]], generated_at: str | None = No
             f"| {row['rule_id']} — {row['rule_name']} | {row.get('dimension') or 'N/A'} | "
             f"{row['total_records']:,} | {row['failed_records']:,} | "
             f"{row['pass_percentage']:.2f}% | {row['failure_percentage']:.2f}% | "
-            f"{row['severity']} | {row['trend']['status']} |"
+            f"{row['severity']} | {row.get('trend', {}).get('status') or 'N/A'} |"
         )
     return "\n".join(lines)
+
+
+DETAIL_LEAK_MARKERS = (
+    "SYSTEM_SERIAL_NUMBER",
+    "SOURCE_RECORD_KEY",
+    "FAILURE_REASON",
+    "DQ_ATTRIBUTES_JSON",
+    "EIM_DQ_FAILED_RECORDS",
+)
+
+
+def assert_summary_only_mail(body: str) -> str:
+    """Reject a mail body that includes failed-record detail payloads."""
+    upper = body.upper()
+    leaked = [marker for marker in DETAIL_LEAK_MARKERS if marker in upper]
+    if leaked:
+        raise ValueError(
+            "DQ mail must not include failed-record details: " + ", ".join(leaked)
+        )
+    return body

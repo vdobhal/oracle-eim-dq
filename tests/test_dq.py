@@ -320,6 +320,57 @@ def test_get_dq_run_report_rebuilds_the_company_summary(service, monkeypatch):
     assert "EC-CO-01" in report["report_markdown"]
 
 
+def test_email_dq_run_summary_sends_summary_only(service, monkeypatch):
+    run_id = "ab" * 16
+    sent: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        service,
+        "_run_internal_select",
+        lambda *_args, **_kwargs: {
+            "rows": [
+                {
+                    "RUN_ID": run_id,
+                    "RULE_ID": "EC-CO-01",
+                    "RULE_NAME": "EC Site required",
+                    "DIMENSION": "Completeness",
+                    "ATTRIBUTE_NAME": "End Customer Site",
+                    "SOURCE_DATABASE": "ONPREM",
+                    "TOTAL_RECORDS": 100,
+                    "FAILED_RECORDS": 8,
+                    "PASSED_RECORDS": 92,
+                    "PASS_PERCENTAGE": 92.0,
+                    "FAILURE_PERCENTAGE": 8.0,
+                    "SEVERITY": "High",
+                    "TREND_STATUS": "BASELINE",
+                    "CHANGE_PERCENTAGE_POINTS": None,
+                    "EXECUTED_AT": "2026-08-25T00:00:00+00:00",
+                    "EXECUTED_BY": "dq-test",
+                }
+            ]
+        },
+    )
+
+    def fake_send(message, **kwargs):
+        from oracle_mcp.mail import message_html, message_plain_text
+
+        sent["body"] = message_plain_text(message)
+        sent["html"] = message_html(message)
+        sent["to"] = message["To"]
+        return "smtp"
+
+    monkeypatch.setattr("oracle_mcp.tools.send_summary_mail", fake_send)
+    result = service.email_dq_run_summary(run_id, "analyst", to_address="vdobhal@netapp.com")
+    assert result["status"] == "OK"
+    assert result["to_address"] == "vdobhal@netapp.com"
+    assert result["included_failed_record_details"] is False
+    assert "SYSTEM_SERIAL_NUMBER" not in sent["body"]
+    assert "EIM_DQ_FAILED_RECORDS" not in sent["body"]
+    assert "Executive Summary" in sent["body"]
+    assert "<table" in sent["html"]
+    assert "Leadership review" in sent["html"]
+
+
 def test_persisted_dq_detail_dml_is_rejected(service, onprem_conn, monkeypatch):
     persistence = _prepare_persist_service(service, onprem_conn, monkeypatch)
     result = service.execute_and_persist_data_quality_rule(

@@ -35,9 +35,10 @@ Rule workflow and report contract: [docs/data-quality-framework.md](docs/data-qu
 
 - `list_active_dq_rules`
 - `execute_data_quality_rule`
-- `start_dq_run`, `execute_and_persist_data_quality_rule`, and `get_dq_run_report`
-  (registered only when persistence is enabled). One `run_id` identifies the
-  full company report.
+- `start_dq_run`, `execute_and_persist_data_quality_rule`, `get_dq_run_report`,
+  and `email_dq_run_summary` (registered only when persistence is enabled).
+  One `run_id` identifies the full company report. Mail sends recon **summary**
+  metrics only; failed-record details are never included.
 
 ## Enable persistence
 

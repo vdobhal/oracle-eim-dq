@@ -113,8 +113,9 @@ def create_server(settings: Settings | None = None) -> FastMCP:
             "column names. For EIM data quality, call list_active_dq_rules first and "
             "execute only ACTIVE rules through execute_data_quality_rule. Persisted "
             "company reports start with start_dq_run, reuse that run_id on every "
-            "execute_and_persist_data_quality_rule call, and load the combined "
-            "summary with get_dq_run_report."
+            "execute_and_persist_data_quality_rule call, load the combined "
+            "summary with get_dq_run_report, and share it with "
+            "email_dq_run_summary (summary metrics only; no failed-record details)."
         ),
     )
 
@@ -334,6 +335,26 @@ def create_server(settings: Settings | None = None) -> FastMCP:
                 run_id or None,
                 user_role or None,
                 batch_id or None,
+            )
+
+        @mcp.tool
+        def email_dq_run_summary(
+            run_id: str = "",
+            to_address: str = "",
+            user_role: str = "",
+            batch_id: str = "",
+        ) -> dict[str, Any]:
+            """Email the company DQ recon summary for one run_id.
+
+            The message contains rule-level metrics from
+            EIM_APPS.EIM_DQ_RECON_SUMMARY only. Failed-record details from
+            EIM_APPS.EIM_DQ_FAILED_RECORDS are never queried or attached.
+            """
+            return service.email_dq_run_summary(
+                run_id or None,
+                user_role or None,
+                batch_id or None,
+                to_address or None,
             )
 
     @mcp.tool
