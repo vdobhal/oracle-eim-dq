@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from itertools import cycle
 
 import pytest
 
@@ -176,7 +177,9 @@ def _prepare_persist_service(service, onprem_conn, monkeypatch):
             "REFERENCE_CHECKPOINT": "Customer master",
         },
     )
-    counts = iter([(2, ["CDM_RPT.V_CUSTOMER_MASTER"]), (1, ["CDM_RPT.V_CUSTOMER_MASTER"])])
+    counts = cycle(
+        [(2, ["CDM_RPT.V_CUSTOMER_MASTER"]), (1, ["CDM_RPT.V_CUSTOMER_MASTER"])]
+    )
     monkeypatch.setattr(service, "_execute_dq_metric", lambda *_args: next(counts))
     monkeypatch.setattr(service, "_previous_persisted_dq_result", lambda *_args: None)
     onprem_conn.set_result(
@@ -231,6 +234,90 @@ def test_persisted_dq_run_uses_guarded_detail_select(
     assert persisted_details[0]["SYSTEM_SERIAL_NUMBER"] == "C-100"
     executed_detail_sql = onprem_conn.executed[-1][0]
     assert "DELETE" not in executed_detail_sql.upper()
+
+
+def test_start_dq_run_returns_a_shared_company_run_id(service):
+    started = service.start_dq_run("analyst", "dq-test")
+    assert started["status"] == "OK"
+    assert started["run_id"] == started["batch_id"]
+    assert len(started["run_id"]) == 32
+
+
+def test_persisted_rules_share_one_company_run_id(service, onprem_conn, monkeypatch):
+    persistence = _prepare_persist_service(service, onprem_conn, monkeypatch)
+    run_id = service.start_dq_run("analyst", "dq-test")["run_id"]
+    first = service.execute_and_persist_data_quality_rule(
+        "R-001",
+        "ONPREM",
+        "SELECT COUNT(*) AS TOTAL_RECORDS FROM CDM_RPT.V_CUSTOMER_MASTER",
+        "SELECT COUNT(*) AS FAILED_RECORDS FROM CDM_RPT.V_CUSTOMER_MASTER WHERE SOURCE_SYSTEM IS NULL",
+        (
+            "SELECT CUSTOMER_NUMBER AS SYSTEM_SERIAL_NUMBER, "
+            "CUSTOMER_NUMBER AS SOURCE_RECORD_KEY, "
+            "'Source is missing' AS FAILURE_REASON, "
+            "'{\"customer_status\":\"ACTIVE\"}' AS DQ_ATTRIBUTES_JSON "
+            "FROM CDM_RPT.V_CUSTOMER_MASTER "
+            "WHERE CUSTOMER_STATUS = 'ACTIVE' AND SOURCE_SYSTEM IS NULL"
+        ),
+        "analyst",
+        "dq-test",
+        run_id,
+    )
+    second = service.execute_and_persist_data_quality_rule(
+        "R-001",
+        "ONPREM",
+        "SELECT COUNT(*) AS TOTAL_RECORDS FROM CDM_RPT.V_CUSTOMER_MASTER",
+        "SELECT COUNT(*) AS FAILED_RECORDS FROM CDM_RPT.V_CUSTOMER_MASTER WHERE SOURCE_SYSTEM IS NULL",
+        (
+            "SELECT CUSTOMER_NUMBER AS SYSTEM_SERIAL_NUMBER, "
+            "CUSTOMER_NUMBER AS SOURCE_RECORD_KEY, "
+            "'Source is missing' AS FAILURE_REASON, "
+            "'{\"customer_status\":\"ACTIVE\"}' AS DQ_ATTRIBUTES_JSON "
+            "FROM CDM_RPT.V_CUSTOMER_MASTER "
+            "WHERE CUSTOMER_STATUS = 'ACTIVE' AND SOURCE_SYSTEM IS NULL"
+        ),
+        "analyst",
+        "dq-test",
+        batch_id=run_id,
+    )
+    assert first["run_id"] == second["run_id"] == run_id
+    assert persistence.calls[0][0]["run_id"] == persistence.calls[1][0]["run_id"] == run_id
+
+
+def test_get_dq_run_report_rebuilds_the_company_summary(service, monkeypatch):
+    run_id = "ab" * 16
+    monkeypatch.setattr(
+        service,
+        "_run_internal_select",
+        lambda *_args, **_kwargs: {
+            "rows": [
+                {
+                    "RUN_ID": run_id,
+                    "RULE_ID": "EC-CO-01",
+                    "RULE_NAME": "EC Site required",
+                    "DIMENSION": "Completeness",
+                    "ATTRIBUTE_NAME": "End Customer Site",
+                    "SOURCE_DATABASE": "ONPREM",
+                    "TOTAL_RECORDS": 100,
+                    "FAILED_RECORDS": 8,
+                    "PASSED_RECORDS": 92,
+                    "PASS_PERCENTAGE": 92.0,
+                    "FAILURE_PERCENTAGE": 8.0,
+                    "SEVERITY": "High",
+                    "TREND_STATUS": "BASELINE",
+                    "CHANGE_PERCENTAGE_POINTS": None,
+                    "EXECUTED_AT": "2026-08-25T00:00:00+00:00",
+                    "EXECUTED_BY": "dq-test",
+                }
+            ]
+        },
+    )
+    report = service.get_dq_run_report(run_id, "analyst")
+    assert report["status"] == "OK"
+    assert report["run_id"] == run_id
+    assert report["rule_count"] == 1
+    assert "Executive Summary" in report["report_markdown"]
+    assert "EC-CO-01" in report["report_markdown"]
 
 
 def test_persisted_dq_detail_dml_is_rejected(service, onprem_conn, monkeypatch):

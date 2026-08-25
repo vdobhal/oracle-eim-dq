@@ -89,9 +89,22 @@ WHERE NOT EXISTS (
 
 The DBA migration `sql/04_dq_results_schema.sql` creates:
 
-- `EIM_APPS.EIM_DQ_RECON_SUMMARY` for one metric/report row per rule run.
+- `EIM_APPS.EIM_DQ_RECON_SUMMARY` for one metric/report row per rule in a
+  company run. `RUN_ID` is the single company-run identifier (`batch_id` in
+  the MCP API is an alias for the same value).
 - `EIM_APPS.EIM_DQ_FAILED_RECORDS` for governed keys, failure reason, and
   approved DQ attributes; it does not store unrestricted source snapshots.
+
+Call `start_dq_run` once, then pass that `run_id` to every
+`execute_and_persist_data_quality_rule` in the report. Load the combined
+summary with `get_dq_run_report` or:
+
+```sql
+SELECT *
+FROM EIM_APPS.EIM_DQ_RECON_SUMMARY
+WHERE RUN_ID = :run_id
+ORDER BY RULE_ID;
+```
 
 Persistence uses a separate `EIM_DQ_WRITER` account with INSERT only on those
 two tables. The source reader remains transactionally read-only, and all

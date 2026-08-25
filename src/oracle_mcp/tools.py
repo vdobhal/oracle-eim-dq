@@ -606,6 +606,8 @@ class ToolService:
         failed_records_detail_sql: str,
         user_role: str | None = None,
         user_id: str | None = None,
+        run_id: str | None = None,
+        batch_id: str | None = None,
     ) -> dict[str, Any]:
         """Evaluate an ACTIVE rule and atomically persist its summary and details."""
         request_id = new_request_id()
@@ -621,6 +623,7 @@ class ToolService:
                         "ORACLE_MCP_DQ_PERSISTENCE_ENABLED."
                     ],
                 )
+            run_id = self._company_dq_run_id(run_id, batch_id)
             clean_rule_id = sanitize_free_text(rule_id, 200)
             rule = self._active_dq_rule(clean_rule_id, role)
             if rule is None:
@@ -670,7 +673,6 @@ class ToolService:
                 database, clean_rule_id, population_signature
             )
             trend = trend_from(metrics["failure_percentage"], previous)
-            run_id = new_request_id()
             source_objects = sorted(
                 set(
                     total_objects
@@ -698,6 +700,7 @@ class ToolService:
                 **metrics,
                 "trend": trend,
             }
+            result["batch_id"] = run_id
             result["recommended_actions"] = recommended_actions(result)
             report = render_markdown([result], result["execution_timestamp"])
             result["report_markdown"] = report
@@ -734,6 +737,7 @@ class ToolService:
             return self._ok(
                 {
                     "run_id": run_id,
+                    "batch_id": run_id,
                     "result": result,
                     "persisted_summary_rows": 1,
                     "persisted_detail_rows": persisted_details,
@@ -752,6 +756,163 @@ class ToolService:
                 role=role,
                 sql=failed_records_detail_sql,
             )
+
+    def start_dq_run(
+        self, user_role: str | None = None, user_id: str | None = None
+    ) -> dict[str, Any]:
+        """Issue one company-run identifier shared by every rule in the report."""
+        request_id = new_request_id()
+        role: Role | None = None
+        try:
+            role, resolved_user = self._identity(user_role, user_id)
+            run_id = new_request_id()
+            self._audit(
+                request_id,
+                "start_dq_run",
+                self.settings.dq_catalog_database,
+                resolved_user,
+                role,
+                "SUCCESS",
+                response_summary=f"run_id={run_id}",
+            )
+            return self._ok(
+                {
+                    "run_id": run_id,
+                    "batch_id": run_id,
+                    "notes": [
+                        "Pass this run_id to every execute_and_persist_data_quality_rule "
+                        "call in the company DQ report.",
+                        "Query EIM_APPS.EIM_DQ_RECON_SUMMARY and EIM_APPS.EIM_DQ_FAILED_RECORDS "
+                        "by RUN_ID to retrieve the complete run.",
+                    ],
+                },
+                request_id,
+            )
+        except ChatbotError as exc:
+            return self._handle(
+                exc,
+                request_id,
+                "start_dq_run",
+                self.settings.dq_catalog_database,
+                user_role,
+                user_id=user_id or "unknown",
+                role=role,
+            )
+
+    def get_dq_run_report(
+        self,
+        run_id: str | None,
+        user_role: str | None = None,
+        batch_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Load every persisted rule for one company DQ run and rebuild the summary."""
+        request_id = new_request_id()
+        role: Role | None = None
+        try:
+            role, resolved_user = self._identity(user_role)
+            shared_id = self._company_dq_run_id(run_id, batch_id, generate=False)
+            table = self.settings.dq_summary_table.strip().upper()
+            if table != "EIM_APPS.EIM_DQ_RECON_SUMMARY":
+                raise ConfigurationError(
+                    "DQ run reports must read EIM_APPS.EIM_DQ_RECON_SUMMARY."
+                )
+            sql = (
+                "SELECT RUN_ID, RULE_ID, RULE_NAME, DIMENSION, ATTRIBUTE_NAME, "
+                "SOURCE_DATABASE, TOTAL_RECORDS, FAILED_RECORDS, PASSED_RECORDS, "
+                "PASS_PERCENTAGE, FAILURE_PERCENTAGE, SEVERITY, TREND_STATUS, "
+                "CHANGE_PERCENTAGE_POINTS, EXECUTED_AT, EXECUTED_BY "
+                f"FROM {table} "
+                "WHERE RUN_ID = :run_id "
+                "ORDER BY RULE_ID"
+            )
+            payload = self._run_internal_select(
+                self.settings.dq_catalog_database.upper(),
+                sql,
+                role,
+                {"run_id": shared_id},
+            )
+            rows = payload["rows"]
+            if not rows:
+                raise SqlValidationError(
+                    f"No persisted DQ results were found for run_id {shared_id}."
+                )
+            results = [self._summary_row_to_result(row) for row in rows]
+            generated_at = str(rows[0].get("EXECUTED_AT") or utc_now())
+            report = render_markdown(results, generated_at)
+            self._audit(
+                request_id,
+                "get_dq_run_report",
+                self.settings.dq_catalog_database,
+                resolved_user,
+                role,
+                "SUCCESS",
+                sql=sql,
+                referenced_objects=[table],
+                row_count=len(results),
+                response_summary=f"run_id={shared_id} rules={len(results)}",
+            )
+            return self._ok(
+                {
+                    "run_id": shared_id,
+                    "batch_id": shared_id,
+                    "rule_count": len(results),
+                    "results": results,
+                    "report_markdown": report,
+                },
+                request_id,
+            )
+        except ChatbotError as exc:
+            return self._handle(
+                exc,
+                request_id,
+                "get_dq_run_report",
+                self.settings.dq_catalog_database,
+                user_role,
+                role=role,
+            )
+
+    @staticmethod
+    def _company_dq_run_id(
+        run_id: str | None,
+        batch_id: str | None = None,
+        *,
+        generate: bool = True,
+    ) -> str:
+        raw = sanitize_free_text(batch_id or run_id or "", 32)
+        if not raw:
+            if generate:
+                return new_request_id()
+            raise SqlValidationError("run_id is required to load a company DQ report.")
+        if not re.fullmatch(r"[0-9a-fA-F]{32}", raw):
+            raise SqlValidationError(
+                "run_id must be the 32-character identifier returned by start_dq_run."
+            )
+        return raw.lower()
+
+    @staticmethod
+    def _summary_row_to_result(row: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "run_id": row.get("RUN_ID"),
+            "batch_id": row.get("RUN_ID"),
+            "rule_id": row.get("RULE_ID"),
+            "rule_name": row.get("RULE_NAME") or row.get("RULE_ID"),
+            "dimension": row.get("DIMENSION") or "",
+            "attribute": row.get("ATTRIBUTE_NAME") or "",
+            "database": row.get("SOURCE_DATABASE"),
+            "total_records": int(row.get("TOTAL_RECORDS") or 0),
+            "failed_records": int(row.get("FAILED_RECORDS") or 0),
+            "passed_records": int(row.get("PASSED_RECORDS") or 0),
+            "pass_percentage": float(row.get("PASS_PERCENTAGE") or 0),
+            "failure_percentage": float(row.get("FAILURE_PERCENTAGE") or 0),
+            "severity": row.get("SEVERITY") or "Low",
+            "trend": {
+                "status": row.get("TREND_STATUS") or "BASELINE",
+                "deteriorated": str(row.get("TREND_STATUS") or "") == "DETERIORATED",
+                "change_percentage_points": row.get("CHANGE_PERCENTAGE_POINTS"),
+            },
+            "execution_timestamp": row.get("EXECUTED_AT"),
+            "executed_by": row.get("EXECUTED_BY"),
+        }
 
     @staticmethod
     def _validate_dq_detail_projection(sql: str) -> None:

@@ -35,8 +35,9 @@ Rule workflow and report contract: [docs/data-quality-framework.md](docs/data-qu
 
 - `list_active_dq_rules`
 - `execute_data_quality_rule`
-- `execute_and_persist_data_quality_rule` (registered only when persistence is enabled)
-- plus the same read-only discovery/validate/execute tools used to confirm objects
+- `start_dq_run`, `execute_and_persist_data_quality_rule`, and `get_dq_run_report`
+  (registered only when persistence is enabled). One `run_id` identifies the
+  full company report.
 
 ## Enable persistence
 

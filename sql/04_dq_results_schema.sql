@@ -1,6 +1,9 @@
 -- Run as EIM_APPS (or a DBA acting on its behalf).
 -- The MCP runtime never executes this DDL.
 
+-- RUN_ID is the company DQ run identifier. Every rule executed in the same
+-- report must reuse the same RUN_ID so governance can retrieve the complete
+-- batch with a single key. RULE_ID distinguishes rows inside that run.
 CREATE TABLE EIM_APPS.EIM_DQ_RECON_SUMMARY (
     RUN_ID                    VARCHAR2(32)    NOT NULL,
     RULE_ID                   VARCHAR2(200)   NOT NULL,

@@ -112,7 +112,9 @@ def create_server(settings: Settings | None = None) -> FastMCP:
             "rewritten_safe_sql that validate_sql returned. Never invent object or "
             "column names. For EIM data quality, call list_active_dq_rules first and "
             "execute only ACTIVE rules through execute_data_quality_rule. Persisted "
-            "runs require the explicit execute_and_persist_data_quality_rule tool."
+            "company reports start with start_dq_run, reuse that run_id on every "
+            "execute_and_persist_data_quality_rule call, and load the combined "
+            "summary with get_dq_run_report."
         ),
     )
 
@@ -279,6 +281,16 @@ def create_server(settings: Settings | None = None) -> FastMCP:
     if settings.dq_persistence_enabled:
 
         @mcp.tool
+        def start_dq_run(user_role: str = "", user_id: str = "") -> dict[str, Any]:
+            """Create one company DQ run identifier.
+
+            Call this once at the start of a company report. Pass the returned
+            ``run_id`` (also returned as ``batch_id``) to every persisted rule
+            execution so all summaries and failed details share a single key.
+            """
+            return service.start_dq_run(user_role or None, user_id or None)
+
+        @mcp.tool
         def execute_and_persist_data_quality_rule(
             rule_id: str,
             target_database: str,
@@ -287,14 +299,17 @@ def create_server(settings: Settings | None = None) -> FastMCP:
             failed_records_detail_sql: str,
             user_role: str = "",
             user_id: str = "",
+            run_id: str = "",
+            batch_id: str = "",
         ) -> dict[str, Any]:
             """Evaluate one ACTIVE DQ rule and persist its summary and failed details.
 
             All three inputs must be SELECT statements over approved objects.
             ``failed_records_detail_sql`` must return exactly SYSTEM_SERIAL_NUMBER,
-            SOURCE_RECORD_KEY, FAILURE_REASON, and DQ_ATTRIBUTES_JSON. A separate
-            least-privilege writer performs fixed parameterized inserts; arbitrary
-            DML remains prohibited.
+            SOURCE_RECORD_KEY, FAILURE_REASON, and DQ_ATTRIBUTES_JSON. Pass the
+            company ``run_id`` from start_dq_run so every rule in the report
+            shares one identifier. A separate least-privilege writer performs
+            fixed parameterized inserts; arbitrary DML remains prohibited.
             """
             return service.execute_and_persist_data_quality_rule(
                 rule_id,
@@ -304,6 +319,21 @@ def create_server(settings: Settings | None = None) -> FastMCP:
                 failed_records_detail_sql,
                 user_role or None,
                 user_id or None,
+                run_id or None,
+                batch_id or None,
+            )
+
+        @mcp.tool
+        def get_dq_run_report(
+            run_id: str = "",
+            user_role: str = "",
+            batch_id: str = "",
+        ) -> dict[str, Any]:
+            """Return the combined company DQ report for one run_id."""
+            return service.get_dq_run_report(
+                run_id or None,
+                user_role or None,
+                batch_id or None,
             )
 
     @mcp.tool
